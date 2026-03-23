@@ -1,0 +1,21 @@
+{
+  "name": "educated-bi-dashboard",
+  "version": "1.0.0",
+  "description": "Educated BI — Intelligent Analytics Dashboard (Axis 1 & Axis 3)",
+  "private": true,
+  "scripts": {
+    "dev":     "vite --port 3000",
+    "build":   "vite build",
+    "preview": "vite preview",
+    "backend": "python app.py"
+  },
+  "dependencies": {
+    "react":        "^18.2.0",
+    "react-dom":    "^18.2.0",
+    "chart.js":     "^4.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite":                 "^4.4.0"
+  }
+}
