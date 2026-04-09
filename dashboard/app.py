@@ -1301,11 +1301,16 @@ def axis9_students_from_school(school_name):
 # ERROR HANDLER
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.errorhandler(Exception)
-def handle_error(e):
-    logger.error(f"API error: {e}")
-    return jsonify({"error": str(e)}), 500
+from werkzeug.exceptions import HTTPException
 
+@app.errorhandler(HTTPException)
+def handle_http_error(e):
+    return jsonify({"error": e.name, "message": e.description}), e.code
+
+@app.errorhandler(Exception)
+def handle_server_error(e):
+    logger.error(f"Unhandled exception: {e}")
+    return jsonify({"error": "Internal server error", "message": str(e)}), 500
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
