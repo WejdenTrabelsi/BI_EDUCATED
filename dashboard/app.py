@@ -56,12 +56,34 @@ def _once():
 @app.route("/api/school-years")
 def school_years():
     """Return school years with SchoolYearKey as int and SchoolYearOid as GUID"""
-    return jsonify(query("""
-        SELECT SchoolYearKey, SchoolYearOid, Description, IsCurrent
+    engine = get_engine()
+    query_sql = text("""
+        SELECT 
+            SchoolYearKey,
+            SchoolYearOid,
+            Description,
+            CASE 
+                WHEN GETDATE() BETWEEN StartDate AND EndDate THEN 1
+                ELSE 0
+            END AS IsCurrent
         FROM dbo.DimSchoolYear
         WHERE SchoolYearKey <> 1
         ORDER BY SchoolYearKey
-    """))
+    """)
+    
+    with engine.connect() as conn:
+        result = conn.execute(query_sql)
+        school_years = [
+            {
+                "SchoolYearKey": row.SchoolYearKey,
+                "SchoolYearOid": str(row.SchoolYearOid),  # Convert GUID to string
+                "YearLabel": row.Description,
+                "IsCurrent": bool(row.IsCurrent)
+            }
+            for row in result
+        ]
+    
+    return jsonify(school_years)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AXIS 1 — Academic Performance Overview
@@ -904,10 +926,53 @@ ACADEMIC_CALENDAR = {
         {"label": "Pre-Mawlid", "type": "pre_holiday", "start": "2024-09-13", "end": "2024-09-14"},
         {"label": "Mawlid Break", "type": "holiday", "start": "2024-09-15", "end": "2024-09-15"},
         {"label": "Post-Mawlid", "type": "post_holiday", "start": "2024-09-16", "end": "2024-09-17"},
-        # ... rest of the calendar entries (keep as before)
+        {"label": "Pre-Autumn Break", "type": "pre_holiday", "start": "2024-10-19", "end": "2024-10-25"},
+        {"label": "Autumn Break", "type": "holiday", "start": "2024-10-26", "end": "2024-11-03"},
+        {"label": "Post-Autumn Break", "type": "post_holiday", "start": "2024-11-04", "end": "2024-11-10"},
+        {"label": "Pre-T1 Exams", "type": "pre_exam", "start": "2024-11-18", "end": "2024-11-29"},
+        {"label": "T1 Exam Session", "type": "exam", "start": "2024-11-30", "end": "2024-12-07"},
+        {"label": "Pre-Winter Break", "type": "pre_holiday", "start": "2024-12-21", "end": "2024-12-27"},
+        {"label": "Winter Break", "type": "holiday", "start": "2024-12-28", "end": "2025-01-05"},
+        {"label": "Post-Winter Break", "type": "post_holiday", "start": "2025-01-06", "end": "2025-01-12"},
+        {"label": "Pre-T2 Exams", "type": "pre_exam", "start": "2025-02-17", "end": "2025-02-28"},
+        {"label": "T2 Exam Session", "type": "exam", "start": "2025-03-01", "end": "2025-03-08"},
+        {"label": "Pre-Spring Break", "type": "pre_holiday", "start": "2025-03-08", "end": "2025-03-14"},
+        {"label": "Spring Break", "type": "holiday", "start": "2025-03-15", "end": "2025-03-23"},
+        {"label": "Post-Spring Break", "type": "post_holiday", "start": "2025-03-24", "end": "2025-03-30"},
+        {"label": "Pre-Eid al-Fitr", "type": "pre_holiday", "start": "2025-03-28", "end": "2025-03-29"},
+        {"label": "Eid al-Fitr Break", "type": "holiday", "start": "2025-03-30", "end": "2025-04-01"},
+        {"label": "Post-Eid al-Fitr", "type": "post_holiday", "start": "2025-04-02", "end": "2025-04-04"},
+        {"label": "Pre-Final Exams", "type": "pre_exam", "start": "2025-05-01", "end": "2025-05-14"},
+        {"label": "Final Exam Session", "type": "exam", "start": "2025-05-15", "end": "2025-06-03"},
+        {"label": "Pre-Eid al-Adha", "type": "pre_holiday", "start": "2025-06-04", "end": "2025-06-05"},
+        {"label": "Eid al-Adha Break", "type": "holiday", "start": "2025-06-06", "end": "2025-06-08"},
+        {"label": "Post-Eid al-Adha", "type": "post_holiday", "start": "2025-06-09", "end": "2025-06-10"},
     ],
     "2025-2026": [
-        # ... rest of the calendar entries (keep as before)
+        {"label": "Pre-Mawlid", "type": "pre_holiday", "start": "2025-09-02", "end": "2025-09-03"},
+        {"label": "Mawlid Break", "type": "holiday", "start": "2025-09-04", "end": "2025-09-05"},
+        {"label": "Post-Mawlid", "type": "post_holiday", "start": "2025-09-06", "end": "2025-09-08"},
+        {"label": "Pre-Autumn Break", "type": "pre_holiday", "start": "2025-10-11", "end": "2025-10-17"},
+        {"label": "Autumn Break", "type": "holiday", "start": "2025-10-18", "end": "2025-10-26"},
+        {"label": "Post-Autumn Break", "type": "post_holiday", "start": "2025-10-27", "end": "2025-11-02"},
+        {"label": "Pre-T1 Exams", "type": "pre_exam", "start": "2025-11-03", "end": "2025-11-14"},
+        {"label": "T1 Exam Session", "type": "exam", "start": "2025-11-15", "end": "2025-11-22"},
+        {"label": "Pre-Winter Break", "type": "pre_holiday", "start": "2025-12-20", "end": "2025-12-26"},
+        {"label": "Winter Break", "type": "holiday", "start": "2025-12-27", "end": "2026-01-04"},
+        {"label": "Post-Winter Break", "type": "post_holiday", "start": "2026-01-05", "end": "2026-01-11"},
+        {"label": "Pre-T2 Exams", "type": "pre_exam", "start": "2026-02-02", "end": "2026-02-13"},
+        {"label": "T2 Exam Session", "type": "exam", "start": "2026-02-14", "end": "2026-02-21"},
+        {"label": "Pre-Spring Break", "type": "pre_holiday", "start": "2026-02-28", "end": "2026-03-06"},
+        {"label": "Spring Break", "type": "holiday", "start": "2026-03-07", "end": "2026-03-15"},
+        {"label": "Post-Spring Break", "type": "post_holiday", "start": "2026-03-16", "end": "2026-03-22"},
+        {"label": "Pre-Eid al-Fitr", "type": "pre_holiday", "start": "2026-03-18", "end": "2026-03-19"},
+        {"label": "Eid al-Fitr Break", "type": "holiday", "start": "2026-03-20", "end": "2026-03-22"},
+        {"label": "Post-Eid al-Fitr", "type": "post_holiday", "start": "2026-03-23", "end": "2026-03-25"},
+        {"label": "Pre-Final Exams", "type": "pre_exam", "start": "2026-04-20", "end": "2026-05-03"},
+        {"label": "Final Exam Session", "type": "exam", "start": "2026-05-04", "end": "2026-05-24"},
+        {"label": "Pre-Eid al-Adha", "type": "pre_holiday", "start": "2026-05-25", "end": "2026-05-26"},
+        {"label": "Eid al-Adha Break", "type": "holiday", "start": "2026-05-27", "end": "2026-05-29"},
+        {"label": "Post-Eid al-Adha", "type": "post_holiday", "start": "2026-05-30", "end": "2026-06-01"},
     ],
 }
 
