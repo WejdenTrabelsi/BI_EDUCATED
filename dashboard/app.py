@@ -32,15 +32,12 @@ def query(sql):
 def wf(alias="er"):
     """Filter by school year using SchoolYearPeriodOid GUID"""
     k = request.args.get("school_year_key")
-    # If k is a numeric string, we need to get the corresponding GUID from DimSchoolYear
     if k and k.isdigit():
-        # Query to get the GUID for the given SchoolYearKey
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(k)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
             return f"AND {alias}.SchoolYearPeriodOid = '{guid}'"
     elif k and not k.isdigit():
-        # If it's already a GUID string
         return f"AND {alias}.SchoolYearPeriodOid = '{k}'"
     return ""
 
@@ -55,7 +52,6 @@ def _once():
 
 @app.route("/api/school-years")
 def school_years():
-    """Return school years with SchoolYearKey as int and SchoolYearOid as GUID"""
     engine = get_engine()
     query_sql = text("""
         SELECT 
@@ -70,19 +66,17 @@ def school_years():
         WHERE SchoolYearKey <> 1
         ORDER BY SchoolYearKey
     """)
-    
     with engine.connect() as conn:
         result = conn.execute(query_sql)
         school_years = [
             {
                 "SchoolYearKey": row.SchoolYearKey,
-                "SchoolYearOid": str(row.SchoolYearOid),  # Convert GUID to string
+                "SchoolYearOid": str(row.SchoolYearOid),
                 "YearLabel": row.Description,
                 "IsCurrent": bool(row.IsCurrent)
             }
             for row in result
         ]
-    
     return jsonify(school_years)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -209,7 +203,7 @@ def axis2_progression_by_student():
     w = f"AND er.StudentOid = '{student_key}'" if student_key else ""
     return jsonify(query(f"""
         SELECT sy.Description AS year_label, sy.SchoolYearKey,
-               s.FirstName+' '+s.LastName AS student_name,
+               s.FullNameArab AS student_name,
                ROUND(AVG(CAST(f.Average AS FLOAT)),2) AS avg_score,
                COUNT(*) AS n_evals
         FROM dbo.FactStudentEvaluation f
@@ -218,10 +212,10 @@ def axis2_progression_by_student():
         JOIN dbo.DimStudent s ON er.StudentOid = s.StudentOid
         WHERE er.StudentOid IS NOT NULL
           AND s.StudentOid IS NOT NULL
-          AND f.Average IS NOT NULL 
-          AND sy.SchoolYearKey <> 1 
+          AND f.Average IS NOT NULL
+          AND sy.SchoolYearKey <> 1
           {w}
-        GROUP BY sy.Description, sy.SchoolYearKey, s.FirstName, s.LastName
+        GROUP BY sy.Description, sy.SchoolYearKey, s.FullNameArab
         ORDER BY sy.SchoolYearKey"""))
 
 @app.route("/api/axis2/year-over-year-by-subject")
@@ -233,10 +227,10 @@ def axis2_yoy_by_subject():
         FROM dbo.FactStudentEvaluation f
         JOIN dbo.DimEvaluationReport er ON f.EvaluationReportKey = er.EvaluationReportKey
         JOIN dbo.DimSchoolYear sy ON er.SchoolYearPeriodOid = sy.SchoolYearOid
-        JOIN dbo.DimContent    c  ON f.ContentKey=c.ContentKey
+        JOIN dbo.DimContent c ON f.ContentKey=c.ContentKey
         WHERE er.StudentOid IS NOT NULL
           AND f.Average IS NOT NULL
-          AND sy.SchoolYearKey <> 1 
+          AND sy.SchoolYearKey <> 1
           AND c.ContentKey<>1
         GROUP BY sy.Description, sy.SchoolYearKey, c.Description
         ORDER BY sy.SchoolYearKey, c.Description"""))
@@ -245,9 +239,9 @@ def axis2_yoy_by_subject():
 def axis2_stability_index():
     return jsonify(query(f"""
         SELECT TOP 20
-            s.FirstName+' '+s.LastName AS student_name,
+            s.FullNameArab AS student_name,
             COUNT(DISTINCT er.SchoolYearPeriodOid) AS years_active,
-            ROUND(AVG(CAST(f.Average AS FLOAT)),2)  AS avg_score,
+            ROUND(AVG(CAST(f.Average AS FLOAT)),2) AS avg_score,
             ROUND(MAX(CAST(f.Average AS FLOAT)) - MIN(CAST(f.Average AS FLOAT)),2) AS score_range,
             ROUND(STDEV(CAST(f.Average AS FLOAT)),2) AS score_stddev
         FROM dbo.FactStudentEvaluation f
@@ -256,7 +250,7 @@ def axis2_stability_index():
         WHERE er.StudentOid IS NOT NULL
           AND s.StudentOid IS NOT NULL
           AND f.Average IS NOT NULL
-        GROUP BY s.FirstName, s.LastName
+        GROUP BY s.FullNameArab
         HAVING COUNT(DISTINCT er.SchoolYearPeriodOid)>=2 AND COUNT(*)>=5
         ORDER BY score_stddev ASC"""))
 
@@ -284,15 +278,15 @@ def axis2_regression():
             GROUP BY er.StudentOid
         )
         SELECT TOP 15
-            s.FirstName+' '+s.LastName AS student_name,
-            ROUND(h.hist_avg,2)        AS historical_avg,
-            ROUND(l.latest_avg,2)      AS latest_avg,
+            s.FullNameArab AS student_name,
+            ROUND(h.hist_avg,2) AS historical_avg,
+            ROUND(l.latest_avg,2) AS latest_avg,
             ROUND(l.latest_avg - h.hist_avg,2) AS delta,
             CASE WHEN l.latest_avg - h.hist_avg < -2 THEN 'Regression'
                  WHEN l.latest_avg - h.hist_avg >  2 THEN 'Improvement'
-                 ELSE 'Stable' END     AS trend_label
+                 ELSE 'Stable' END AS trend_label
         FROM history h
-        JOIN latest  l ON h.StudentOid = l.StudentOid
+        JOIN latest l ON h.StudentOid = l.StudentOid
         JOIN dbo.DimStudent s ON h.StudentOid = s.StudentOid
         WHERE s.StudentOid IS NOT NULL
         ORDER BY delta ASC"""))
@@ -301,7 +295,7 @@ def axis2_regression():
 def axis2_semester():
     return jsonify(query("""
         SELECT sy.Description AS year_label,
-               er.ReportName AS report_name,
+               CAST(er.EvaluationReportKey AS NVARCHAR) AS report_name,
                ROUND(AVG(CAST(f.Average AS FLOAT)),2) AS avg_score,
                COUNT(DISTINCT er.StudentOid) AS student_count
         FROM dbo.FactStudentEvaluation f
@@ -309,91 +303,137 @@ def axis2_semester():
         JOIN dbo.DimSchoolYear sy ON er.SchoolYearPeriodOid = sy.SchoolYearOid
         WHERE er.StudentOid IS NOT NULL
           AND f.Average IS NOT NULL
-          AND sy.SchoolYearKey <> 1 
+          AND sy.SchoolYearKey <> 1
           AND er.EvaluationReportKey<>1
-        GROUP BY sy.Description, er.ReportName
-        ORDER BY sy.Description, er.ReportName"""))
+        GROUP BY sy.Description, er.EvaluationReportKey
+        ORDER BY sy.Description, er.EvaluationReportKey"""))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AXIS 3 — Attendance
 # ══════════════════════════════════════════════════════════════════════════════
-
 @app.route("/api/axis3/kpis")
 def axis3_kpis():
-    w = wf()
+    w = wf()  # school year filter
+
+    # Student Attendance KPIs
     s = query(f"""
-        SELECT COUNT(DISTINCT f.StudentOid) AS students_tracked,
-               ROUND(100.0*SUM(CASE WHEN f.IsPresent=1 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS presence_rate,
-               ROUND(100.0*SUM(CASE WHEN f.IsLate=1 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS late_rate,
-               COUNT(*) AS total_records
-        FROM dbo.FactStudentAttendance f 
-        WHERE f.StudentOid IS NOT NULL {w}""")
+        SELECT 
+            COUNT(DISTINCT f.StudentKey) AS students_tracked,
+            ROUND(100.0 * SUM(CASE WHEN f.Checks > 0 THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS presence_rate,
+            ROUND(100.0 * SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS absence_rate,
+            ROUND(100.0 * SUM(CASE WHEN f.LateMinutes > 0 AND f.LateMinutes IS NOT NULL 
+                                   THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS late_rate,
+            COUNT(*) AS total_records
+        FROM dbo.FactStudentAttendance f
+        WHERE f.StudentKey IS NOT NULL {w}
+    """)
+
+    # Teacher Attendance KPIs — FIXED (using your actual columns)
     t = query(f"""
-        SELECT COUNT(DISTINCT f.TeacherKey) AS teachers_tracked,
-               ROUND(AVG(CAST(f.NumberOfHours AS FLOAT)),2) AS avg_hours,
-               ROUND(100.0*SUM(CASE WHEN f.IsLate=1 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS teacher_late_rate
-        FROM dbo.FactTeacherAttendance f WHERE f.TeacherKey<>1 {w}""")
-    return jsonify({**(s[0] if s else {}), **(t[0] if t else {})})
+        SELECT 
+            COUNT(DISTINCT f.TeacherKey) AS teachers_tracked,
+            COUNT(*) AS teacher_sessions,
+            ROUND(100.0 * SUM(CASE WHEN f.LateMinutes > 0 AND f.LateMinutes IS NOT NULL 
+                                   THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS teacher_late_rate,
+            ROUND(100.0 * SUM(CASE WHEN f.Checks > 0 THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS teacher_presence_rate
+        FROM dbo.FactTeacherAttendance f
+        WHERE f.TeacherKey <> 1 {w}
+    """)
+
+    # Merge both results safely
+    result = {
+        **(s[0] if s else {}),
+        **(t[0] if t else {})
+    }
+    return jsonify(result)
+
 
 @app.route("/api/axis3/absence-rate-by-month")
 def axis3_absence_rate_by_month():
     return jsonify(query(f"""
-        SELECT d.Year AS year, d.Month AS month, d.MonthName AS month_name,
-               COUNT(*) AS total_records,
-               SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END) AS absent_count,
-               ROUND(100.0*SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
+        SELECT 
+            d.YearNumber AS year,
+            d.MonthNumber AS month,
+            d.MonthName AS month_name,
+            COUNT(*) AS total_records,
+            SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END) AS absent_count,
+            ROUND(100.0 * SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS absence_rate
         FROM dbo.FactStudentAttendance f
-        JOIN dbo.DimDate d ON f.DateKey=d.DateKey
-        WHERE f.StudentOid IS NOT NULL
-          AND d.DateKey<>-1 
+        JOIN dbo.DimDate d ON f.DateKey = d.DateKey
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
           {wf()}
-        GROUP BY d.Year,d.Month,d.MonthName ORDER BY d.Year,d.Month"""))
+        GROUP BY d.YearNumber, d.MonthNumber, d.MonthName
+        ORDER BY d.YearNumber, d.MonthNumber
+    """))
+
 
 @app.route("/api/axis3/teacher-hours-by-month")
 def axis3_teacher_hours_by_month():
     return jsonify(query(f"""
-        SELECT d.MonthName AS month_name, d.Month AS month, d.Year AS year,
-               SUM(CAST(f.NumberOfHours AS FLOAT)) AS total_hours,
-               COUNT(DISTINCT f.TeacherKey) AS active_teachers,
-               ROUND(AVG(CAST(f.NumberOfHours AS FLOAT)),2) AS avg_hours_per_teacher
+        SELECT 
+            d.MonthName AS month_name,
+            d.MonthNumber AS month,
+            d.YearNumber AS year,
+            COUNT(DISTINCT f.TeacherKey) AS active_teachers,
+            COUNT(*) AS total_sessions,
+            -- Bonus: Average Checks per teacher session (if meaningful)
+            ROUND(AVG(CAST(f.Checks AS FLOAT)), 2) AS avg_checks_per_session
         FROM dbo.FactTeacherAttendance f
-        JOIN dbo.DimDate d ON f.DateKey=d.DateKey
-        WHERE f.TeacherKey<>1 AND d.DateKey<>-1 {wf()}
-        GROUP BY d.MonthName,d.Month,d.Year ORDER BY d.Year,d.Month"""))
+        JOIN dbo.DimDate d ON f.DateKey = d.DateKey
+        WHERE f.TeacherKey <> 1
+          AND d.DateKey <> -1
+          {wf()}
+        GROUP BY d.MonthName, d.MonthNumber, d.YearNumber
+        ORDER BY d.YearNumber, d.MonthNumber
+    """))
+
 
 @app.route("/api/axis3/top-absent-students")
 def axis3_top_absent_students():
     return jsonify(query(f"""
-        SELECT TOP 10 s.FirstName+' '+s.LastName AS student_name,
-               COUNT(*) AS total_days,
-               SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END) AS absent_days,
-               ROUND(100.0*SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
+        SELECT TOP 10 
+            s.FullNameArab AS student_name,
+            COUNT(*) AS total_days,
+            SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END) AS absent_days,
+            ROUND(100.0 * SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(*), 0), 1) AS absence_rate
         FROM dbo.FactStudentAttendance f
-        JOIN dbo.DimStudent s ON f.StudentOid = s.StudentOid
-        WHERE f.StudentOid IS NOT NULL
-          AND s.StudentOid IS NOT NULL
+        JOIN dbo.DimStudent s ON f.StudentKey = s.StudentKey
+        WHERE f.StudentKey IS NOT NULL
           {wf()}
-        GROUP BY s.FirstName,s.LastName HAVING COUNT(*)>=3
-        ORDER BY absence_rate DESC"""))
+        GROUP BY s.FullNameArab 
+        HAVING COUNT(*) >= 3
+        ORDER BY absence_rate DESC
+    """))
+
 
 @app.route("/api/axis3/attendance-vs-score")
 def axis3_attendance_vs_score():
-    w = wf("att")
+    w = wf("er")
     return jsonify(query(f"""
-        SELECT s.FirstName+' '+s.LastName AS student_name,
-               ROUND(100.0*SUM(CASE WHEN att.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(att.FactKey),0),1) AS absence_rate,
-               ROUND(AVG(CAST(ev.Average AS FLOAT)),2) AS avg_score
+        SELECT 
+            s.FullNameArab AS student_name,
+            ROUND(100.0 * SUM(CASE WHEN att.Checks = 0 THEN 1 ELSE 0 END) 
+                  / NULLIF(COUNT(att.FactKey), 0), 1) AS absence_rate,
+            ROUND(AVG(CAST(ev.Average AS FLOAT)), 2) AS avg_score
         FROM dbo.FactStudentAttendance att
-        JOIN dbo.DimStudent s ON att.StudentOid = s.StudentOid
-        JOIN dbo.FactStudentEvaluation ev ON att.StudentOid = ev.StudentOid
-        JOIN dbo.DimEvaluationReport er ON ev.EvaluationReportKey = er.EvaluationReportKey
-        WHERE att.StudentOid IS NOT NULL
+        JOIN dbo.DimStudent s ON att.StudentKey = s.StudentKey
+        JOIN dbo.DimEvaluationReport er ON er.StudentOid = s.StudentOid
+        JOIN dbo.FactStudentEvaluation ev ON ev.EvaluationReportKey = er.EvaluationReportKey
+        WHERE att.StudentKey IS NOT NULL
           AND s.StudentOid IS NOT NULL
-          AND ev.Average IS NOT NULL 
+          AND ev.Average IS NOT NULL
           {w}
-        GROUP BY s.FirstName,s.LastName
-        HAVING COUNT(att.FactKey)>=3 AND COUNT(ev.FactKey)>=3"""))
-
+        GROUP BY s.FullNameArab
+        HAVING COUNT(att.FactKey) >= 3 AND COUNT(ev.FactKey) >= 3
+    """))
 # ══════════════════════════════════════════════════════════════════════════════
 # AXIS 4 — Weather Impact (Open-Meteo historical API)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -429,20 +469,20 @@ def axis4_weather_vs_absence():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wh = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wh = f"AND f.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wh = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wh = f"AND f.SchoolYearPeriodOid = '{school_year_key}'"
+
     attendance = query(f"""
         SELECT d.FullDate AS full_date,
                COUNT(*) AS total,
-               SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END) AS absent_count,
-               ROUND(100.0*SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
+               SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END) AS absent_count,
+               ROUND(100.0*SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
         FROM dbo.FactStudentAttendance f
-        JOIN dbo.DimDate d ON f.DateKey=d.DateKey
-        WHERE f.StudentOid IS NOT NULL
-          AND d.DateKey<>-1 
-          AND d.FullDate IS NOT NULL 
+        JOIN dbo.DimDate d ON f.DateKey = d.DateKey
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
+          AND d.FullDate IS NOT NULL
           {wh}
         GROUP BY d.FullDate ORDER BY d.FullDate""")
     if not attendance:
@@ -468,18 +508,18 @@ def axis4_rainy_vs_dry():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wh = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wh = f"AND f.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wh = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wh = f"AND f.SchoolYearPeriodOid = '{school_year_key}'"
+
     attendance = query(f"""
         SELECT d.FullDate AS full_date,
-               ROUND(100.0*SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
+               ROUND(100.0*SUM(CASE WHEN f.Checks=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
         FROM dbo.FactStudentAttendance f
-        JOIN dbo.DimDate d ON f.DateKey=d.DateKey
-        WHERE f.StudentOid IS NOT NULL
-          AND d.DateKey<>-1 
-          AND d.FullDate IS NOT NULL 
+        JOIN dbo.DimDate d ON f.DateKey = d.DateKey
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
+          AND d.FullDate IS NOT NULL
           {wh}
         GROUP BY d.FullDate""")
     if not attendance:
@@ -508,22 +548,24 @@ def axis4_seasonal():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wh = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wh = f"AND f.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wh = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wh = f"AND f.SchoolYearPeriodOid = '{school_year_key}'"
+
     monthly_att = query(f"""
-        SELECT d.Month AS month, d.MonthName AS month_name,
-               ROUND(100.0*SUM(CASE WHEN f.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate,
+        SELECT d.MonthNumber AS month,
+               d.MonthName AS month_name,
+               ROUND(100.0*SUM(CASE WHEN f.Checks=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate,
                MIN(CAST(d.FullDate AS VARCHAR(10))) AS sample_start,
                MAX(CAST(d.FullDate AS VARCHAR(10))) AS sample_end
         FROM dbo.FactStudentAttendance f
-        JOIN dbo.DimDate d ON f.DateKey=d.DateKey
-        WHERE f.StudentOid IS NOT NULL
-          AND d.DateKey<>-1 
-          AND d.FullDate IS NOT NULL 
+        JOIN dbo.DimDate d ON f.DateKey = d.DateKey
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
+          AND d.FullDate IS NOT NULL
           {wh}
-        GROUP BY d.Month,d.MonthName ORDER BY d.Month""")
+        GROUP BY d.MonthNumber, d.MonthName
+        ORDER BY d.MonthNumber""")
     if not monthly_att:
         return jsonify([])
     all_dates = [r for r in monthly_att if r["sample_start"]]
@@ -557,9 +599,9 @@ def axis5_outcomes_by_report():
             wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
         wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
-    
+
     return jsonify(query(f"""
-        SELECT er.ReportName AS report_name,
+        SELECT CAST(er.EvaluationReportKey AS NVARCHAR) AS report_name,
                c.Description AS subject,
                sy.Description AS year_label,
                ROUND(AVG(CAST(f.Average AS FLOAT)),2) AS avg_score,
@@ -572,12 +614,12 @@ def axis5_outcomes_by_report():
         JOIN dbo.DimSchoolYear sy ON er.SchoolYearPeriodOid = sy.SchoolYearOid
         WHERE er.StudentOid IS NOT NULL
           AND f.Average IS NOT NULL
-          AND er.EvaluationReportKey<>1 
-          AND c.ContentKey<>1 
+          AND er.EvaluationReportKey<>1
+          AND c.ContentKey<>1
           AND sy.SchoolYearKey<>1
           {wh} {wy}
-        GROUP BY er.ReportName,c.Description,sy.Description
-        ORDER BY sy.Description,er.ReportName"""))
+        GROUP BY er.EvaluationReportKey, c.Description, sy.Description
+        ORDER BY sy.Description, er.EvaluationReportKey"""))
 
 @app.route("/api/axis5/dispersion-by-report")
 def axis5_dispersion():
@@ -590,9 +632,9 @@ def axis5_dispersion():
             wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
         wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
-    
+
     return jsonify(query(f"""
-        SELECT er.ReportName AS report_name,
+        SELECT CAST(er.EvaluationReportKey AS NVARCHAR) AS report_name,
                ROUND(MIN(CAST(f.Average AS FLOAT)),2) AS score_min,
                ROUND(MAX(CAST(f.Average AS FLOAT)),2) AS score_max,
                ROUND(AVG(CAST(f.Average AS FLOAT)),2) AS score_avg,
@@ -602,10 +644,10 @@ def axis5_dispersion():
         JOIN dbo.DimEvaluationReport er ON f.EvaluationReportKey=er.EvaluationReportKey
         WHERE er.StudentOid IS NOT NULL
           AND f.Average IS NOT NULL
-          AND er.EvaluationReportKey<>1 
+          AND er.EvaluationReportKey<>1
           {wy}
-        GROUP BY er.ReportName
-        ORDER BY er.ReportName"""))
+        GROUP BY er.EvaluationReportKey
+        ORDER BY er.EvaluationReportKey"""))
 
 @app.route("/api/axis5/subject-list")
 def axis5_subject_list():
@@ -623,29 +665,28 @@ def axis5_presence_performance():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     return jsonify(query(f"""
-        SELECT er.ReportName AS report_name,
+        SELECT CAST(er.EvaluationReportKey AS NVARCHAR) AS report_name,
                ROUND(AVG(CAST(ev.Average AS FLOAT)),2) AS avg_score,
-               ROUND(100.0*SUM(CASE WHEN att.IsPresent=1 THEN 1 ELSE 0 END)/NULLIF(COUNT(att.FactKey),0),1) AS presence_rate
+               ROUND(100.0*SUM(CASE WHEN att.Checks > 0 THEN 1 ELSE 0 END)/NULLIF(COUNT(att.FactKey),0),1) AS presence_rate
         FROM dbo.FactStudentEvaluation ev
         JOIN dbo.DimEvaluationReport er ON ev.EvaluationReportKey=er.EvaluationReportKey
-        LEFT JOIN dbo.FactStudentAttendance att
-               ON ev.StudentOid = att.StudentOid
-        WHERE ev.StudentOid IS NOT NULL
+        LEFT JOIN dbo.DimStudent ds ON ds.StudentOid = er.StudentOid
+        LEFT JOIN dbo.FactStudentAttendance att ON att.StudentKey = ds.StudentKey
+        WHERE er.StudentOid IS NOT NULL
           AND ev.Average IS NOT NULL
-          AND er.EvaluationReportKey<>1 
+          AND er.EvaluationReportKey<>1
           {wy}
-        GROUP BY er.ReportName
-        ORDER BY er.ReportName"""))
+        GROUP BY er.EvaluationReportKey
+        ORDER BY er.EvaluationReportKey"""))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AXIS 6 — Academic Risk Detection
 # ══════════════════════════════════════════════════════════════════════════════
-
 @app.route("/api/axis6/risk-scores")
 def axis6_risk_scores():
     school_year_key = request.args.get("school_year_key")
@@ -654,45 +695,50 @@ def axis6_risk_scores():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     return jsonify(query(f"""
         WITH academic AS (
-            SELECT ev.StudentOid,
-                   ROUND(AVG(CAST(ev.Average AS FLOAT)),2) AS avg_score,
-                   ROUND(100.0*SUM(CASE WHEN ev.Average<10 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS fail_rate_pct
-            FROM dbo.FactStudentEvaluation ev
-            WHERE ev.StudentOid IS NOT NULL
-              AND ev.Average IS NOT NULL 
+            SELECT er.StudentOid,
+                   ROUND(AVG(CAST(f.Average AS FLOAT)),2) AS avg_score,
+                   ROUND(100.0*SUM(CASE WHEN f.Average<10 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS fail_rate_pct
+            FROM dbo.FactStudentEvaluation f
+            JOIN dbo.DimEvaluationReport er ON f.EvaluationReportKey = er.EvaluationReportKey
+            WHERE er.StudentOid IS NOT NULL
+              AND f.Average IS NOT NULL
               {wy}
-            GROUP BY ev.StudentOid
+            GROUP BY er.StudentOid
         ),
         attendance AS (
-            SELECT att.StudentOid,
-                   ROUND(100.0*SUM(CASE WHEN att.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
+            SELECT s.StudentOid,
+                   ROUND(100.0*SUM(CASE WHEN att.Checks=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS absence_rate
             FROM dbo.FactStudentAttendance att
-            WHERE att.StudentOid IS NOT NULL
-            GROUP BY att.StudentOid
+            JOIN dbo.DimStudent s ON att.StudentKey = s.StudentKey
+            WHERE att.StudentKey IS NOT NULL
+            GROUP BY s.StudentOid
         ),
         payment AS (
-            SELECT p.StudentOid, COUNT(*) AS payment_count
+            SELECT s.StudentOid, 
+                   COUNT(*) AS payment_count,
+                   SUM(p.PaidAmount) AS total_paid   -- bonus, can be useful later
             FROM dbo.FactStudentPayment p
-            WHERE p.StudentOid IS NOT NULL
-            GROUP BY p.StudentOid
+            JOIN dbo.DimStudent s ON p.StudentKey = s.StudentKey
+            WHERE p.StudentKey IS NOT NULL
+            GROUP BY s.StudentOid
         )
         SELECT TOP 30
-            s.FirstName+' '+s.LastName AS student_name,
+            s.FullNameArab AS student_name,
             ROUND(a.avg_score,2) AS avg_score,
             COALESCE(att.absence_rate,0) AS absence_rate,
             a.fail_rate_pct AS fail_rate_pct,
             COALESCE(pay.payment_count,0) AS payment_count,
-            ROUND(LEAST(100,
+            ROUND(
                 (CASE WHEN a.avg_score < 10 THEN (10 - a.avg_score) * 4.0 ELSE 0 END)
                 + COALESCE(att.absence_rate,0) * 0.35
                 + a.fail_rate_pct * 0.25
-            ), 1) AS risk_score,
+            , 1) AS risk_score,
             CASE
                 WHEN (CASE WHEN a.avg_score<10 THEN (10-a.avg_score)*4.0 ELSE 0 END)
                    + COALESCE(att.absence_rate,0)*0.35
@@ -707,7 +753,8 @@ def axis6_risk_scores():
         LEFT JOIN attendance att ON a.StudentOid = att.StudentOid
         LEFT JOIN payment pay ON a.StudentOid = pay.StudentOid
         WHERE s.StudentOid IS NOT NULL
-        ORDER BY risk_score DESC"""))
+        ORDER BY risk_score DESC
+    """))
 
 @app.route("/api/axis6/risk-distribution")
 def axis6_risk_distribution():
@@ -717,27 +764,29 @@ def axis6_risk_distribution():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     return jsonify(query(f"""
         WITH academic AS (
-            SELECT ev.StudentOid,
-                   AVG(CAST(ev.Average AS FLOAT)) AS avg_score,
-                   100.0*SUM(CASE WHEN ev.Average<10 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS fail_rate_pct
-            FROM dbo.FactStudentEvaluation ev
-            WHERE ev.StudentOid IS NOT NULL
-              AND ev.Average IS NOT NULL 
+            SELECT er.StudentOid,
+                   AVG(CAST(f.Average AS FLOAT)) AS avg_score,
+                   100.0*SUM(CASE WHEN f.Average<10 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS fail_rate_pct
+            FROM dbo.FactStudentEvaluation f
+            JOIN dbo.DimEvaluationReport er ON f.EvaluationReportKey = er.EvaluationReportKey
+            WHERE er.StudentOid IS NOT NULL
+              AND f.Average IS NOT NULL
               {wy}
-            GROUP BY ev.StudentOid
+            GROUP BY er.StudentOid
         ),
         attendance AS (
-            SELECT att.StudentOid,
-                   100.0*SUM(CASE WHEN att.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS absence_rate
+            SELECT s.StudentOid,
+                   100.0*SUM(CASE WHEN att.Checks=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS absence_rate
             FROM dbo.FactStudentAttendance att
-            WHERE att.StudentOid IS NOT NULL
-            GROUP BY att.StudentOid
+            JOIN dbo.DimStudent s ON att.StudentKey = s.StudentKey
+            WHERE att.StudentKey IS NOT NULL
+            GROUP BY s.StudentOid
         ),
         scored AS (
             SELECT
@@ -770,30 +819,32 @@ def axis6_early_warning():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     return jsonify(query(f"""
         WITH academic AS (
-            SELECT ev.StudentOid,
-                   AVG(CAST(ev.Average AS FLOAT)) AS avg_score,
-                   100.0*SUM(CASE WHEN ev.Average<10 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS fail_rate_pct
-            FROM dbo.FactStudentEvaluation ev
-            WHERE ev.StudentOid IS NOT NULL
-              AND ev.Average IS NOT NULL 
+            SELECT er.StudentOid,
+                   AVG(CAST(f.Average AS FLOAT)) AS avg_score,
+                   100.0*SUM(CASE WHEN f.Average<10 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS fail_rate_pct
+            FROM dbo.FactStudentEvaluation f
+            JOIN dbo.DimEvaluationReport er ON f.EvaluationReportKey = er.EvaluationReportKey
+            WHERE er.StudentOid IS NOT NULL
+              AND f.Average IS NOT NULL
               {wy}
-            GROUP BY ev.StudentOid
+            GROUP BY er.StudentOid
         ),
         attendance AS (
-            SELECT att.StudentOid,
-                   100.0*SUM(CASE WHEN att.IsPresent=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS absence_rate
+            SELECT s.StudentOid,
+                   100.0*SUM(CASE WHEN att.Checks=0 THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) AS absence_rate
             FROM dbo.FactStudentAttendance att
-            WHERE att.StudentOid IS NOT NULL
-            GROUP BY att.StudentOid
+            JOIN dbo.DimStudent s ON att.StudentKey = s.StudentKey
+            WHERE att.StudentKey IS NOT NULL
+            GROUP BY s.StudentOid
         )
         SELECT TOP 20
-            s.FirstName+' '+s.LastName AS student_name,
+            s.FullNameArab AS student_name,
             ROUND(a.avg_score,2) AS avg_score,
             ROUND(COALESCE(att.absence_rate,0),1) AS absence_rate,
             ROUND(a.fail_rate_pct,1) AS fail_rate_pct,
@@ -824,40 +875,28 @@ def axis7_students_by_zone():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     return jsonify(query(f"""
         SELECT
-            COALESCE(s.ZoneName, s.Governorate, 'Unknown') AS zone_name,
-            COUNT(DISTINCT s.StudentOid) AS student_count,
-            ROUND(100.0 * SUM(CASE WHEN att.IsPresent = 0 THEN 1 ELSE 0 END)
+            COALESCE(s.Governorate, 'Unknown') AS zone_name,
+            COUNT(DISTINCT s.StudentKey) AS student_count,
+            ROUND(100.0 * SUM(CASE WHEN att.Checks = 0 THEN 1 ELSE 0 END)
                 / NULLIF(COUNT(att.FactKey), 0), 1) AS absence_rate,
-            ROUND(100.0 * SUM(CASE WHEN att.IsLate = 1 THEN 1 ELSE 0 END)
+            ROUND(100.0 * SUM(CASE WHEN att.LateMinutes > 0 THEN 1 ELSE 0 END)
                 / NULLIF(COUNT(att.FactKey), 0), 1) AS late_rate,
             ROUND(AVG(CAST(ev.Average AS FLOAT)), 2) AS avg_score
         FROM dbo.DimStudent s
-        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentOid = att.StudentOid {wy}
-        LEFT JOIN dbo.FactStudentEvaluation ev ON s.StudentOid = ev.StudentOid 
+        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentKey = att.StudentKey
+        LEFT JOIN dbo.DimEvaluationReport er ON er.StudentOid = s.StudentOid {wy}
+        LEFT JOIN dbo.FactStudentEvaluation ev ON ev.EvaluationReportKey = er.EvaluationReportKey
             AND ev.Average IS NOT NULL
-        WHERE s.StudentOid IS NOT NULL
-          AND COALESCE(s.ZoneName, s.Governorate) IS NOT NULL
-          AND COALESCE(s.ZoneName, s.Governorate) <> ''
-        GROUP BY COALESCE(s.ZoneName, s.Governorate)
-        ORDER BY student_count DESC"""))
-
-@app.route("/api/axis7/zone-list")
-def axis7_zone_list():
-    return jsonify(query("""
-        SELECT DISTINCT
-            COALESCE(ZoneName, Governorate, 'Unknown') AS zone_name,
-            COUNT(*) AS student_count
-        FROM dbo.DimStudent
-        WHERE StudentOid IS NOT NULL
-          AND COALESCE(ZoneName, Governorate) IS NOT NULL
-          AND COALESCE(ZoneName, Governorate) <> ''
-        GROUP BY COALESCE(ZoneName, Governorate)
+        WHERE s.StudentKey IS NOT NULL
+          AND s.Governorate IS NOT NULL
+          AND s.Governorate <> ''
+        GROUP BY s.Governorate
         ORDER BY student_count DESC"""))
 
 @app.route("/api/axis7/governorate-summary")
@@ -871,17 +910,17 @@ def axis7_governorate_summary():
             wy = f"AND att.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
         wy = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+
     return jsonify(query(f"""
         SELECT
             COALESCE(s.Governorate, 'Unknown') AS governorate,
             COUNT(DISTINCT s.StudentOid) AS student_count,
-            ROUND(100.0 * SUM(CASE WHEN att.IsPresent = 0 THEN 1 ELSE 0 END)
+            ROUND(100.0 * SUM(CASE WHEN att.Checks = 0 THEN 1 ELSE 0 END)
                 / NULLIF(COUNT(att.FactKey), 0), 1) AS absence_rate,
-            ROUND(100.0 * SUM(CASE WHEN att.IsLate = 1 THEN 1 ELSE 0 END)
+            ROUND(100.0 * SUM(CASE WHEN att.LateMinutes > 0 THEN 1 ELSE 0 END)
                 / NULLIF(COUNT(att.FactKey), 0), 1) AS late_rate
         FROM dbo.DimStudent s
-        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentOid = att.StudentOid {wy}
+        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentKey = att.StudentKey {wy}
         WHERE s.StudentOid IS NOT NULL
         GROUP BY s.Governorate
         ORDER BY student_count DESC"""))
@@ -894,26 +933,27 @@ def axis7_zone_detail(zone_name):
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     return jsonify(query(f"""
         SELECT TOP 15
-            s.FirstName + ' ' + s.LastName AS student_name,
-            COALESCE(s.ZoneName, s.Governorate, 'Unknown') AS zone_name,
-            ROUND(100.0 * SUM(CASE WHEN att.IsPresent = 0 THEN 1 ELSE 0 END)
+            s.FullNameArab AS student_name,
+            COALESCE(s.Governorate, 'Unknown') AS zone_name,
+            ROUND(100.0 * SUM(CASE WHEN att.Checks = 0 THEN 1 ELSE 0 END)
                 / NULLIF(COUNT(att.FactKey), 0), 1) AS absence_rate,
-            ROUND(100.0 * SUM(CASE WHEN att.IsLate = 1 THEN 1 ELSE 0 END)
+            ROUND(100.0 * SUM(CASE WHEN att.LateMinutes > 0 THEN 1 ELSE 0 END)
                 / NULLIF(COUNT(att.FactKey), 0), 1) AS late_rate,
             ROUND(AVG(CAST(ev.Average AS FLOAT)), 2) AS avg_score
         FROM dbo.DimStudent s
-        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentOid = att.StudentOid {wy}
-        LEFT JOIN dbo.FactStudentEvaluation ev ON s.StudentOid = ev.StudentOid
+        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentKey = att.StudentKey
+        LEFT JOIN dbo.DimEvaluationReport er ON er.StudentOid = s.StudentOid {wy}
+        LEFT JOIN dbo.FactStudentEvaluation ev ON ev.EvaluationReportKey = er.EvaluationReportKey
+            AND ev.Average IS NOT NULL
         WHERE s.StudentOid IS NOT NULL
-          AND COALESCE(s.ZoneName, s.Governorate) = '{zone_name}'
-          AND ev.Average IS NOT NULL
-        GROUP BY s.FirstName, s.LastName, s.ZoneName, s.Governorate
+          AND s.Governorate = '{zone_name}'
+        GROUP BY s.FullNameArab, s.Governorate
         HAVING COUNT(att.FactKey) >= 3
         ORDER BY absence_rate DESC"""))
 
@@ -1002,6 +1042,7 @@ def _get_year_label(school_year_key):
             year_label = yr[0].get("Description", "2024-2025")
     return year_label
 
+
 @app.route("/api/axis8/absence-by-period-type")
 def axis8_by_period_type():
     school_year_key = request.args.get("school_year_key")
@@ -1010,20 +1051,20 @@ def axis8_by_period_type():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wh = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wh = f"AND f.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wh = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wh = f"AND f.SchoolYearPeriodOid = '{school_year_key}'"
+
     year_label = _get_year_label(school_year_key)
     daily = query(f"""
         SELECT d.FullDate AS full_date,
-               ROUND(100.0 * SUM(CASE WHEN f.IsPresent = 0 THEN 1 ELSE 0 END)
+               ROUND(100.0 * SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END)
                      / NULLIF(COUNT(*), 0), 1) AS absence_rate
         FROM dbo.FactStudentAttendance f
         JOIN dbo.DimDate d ON f.DateKey = d.DateKey
-        WHERE f.StudentOid IS NOT NULL 
-          AND d.DateKey <> -1 
-          AND d.FullDate IS NOT NULL 
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
+          AND d.FullDate IS NOT NULL
           {wh}
         GROUP BY d.FullDate ORDER BY d.FullDate""")
     buckets = defaultdict(list)
@@ -1048,21 +1089,21 @@ def axis8_daily_tagged():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wh = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wh = f"AND f.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wh = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wh = f"AND f.SchoolYearPeriodOid = '{school_year_key}'"
+
     year_label = _get_year_label(school_year_key)
     daily = query(f"""
         SELECT d.FullDate AS full_date,
-               ROUND(100.0 * SUM(CASE WHEN f.IsPresent = 0 THEN 1 ELSE 0 END)
+               ROUND(100.0 * SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END)
                      / NULLIF(COUNT(*), 0), 1) AS absence_rate,
                COUNT(*) AS total_records
         FROM dbo.FactStudentAttendance f
         JOIN dbo.DimDate d ON f.DateKey = d.DateKey
-        WHERE f.StudentOid IS NOT NULL
-          AND d.DateKey <> -1 
-          AND d.FullDate IS NOT NULL 
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
+          AND d.FullDate IS NOT NULL
           {wh}
         GROUP BY d.FullDate ORDER BY d.FullDate""")
     result = []
@@ -1072,11 +1113,6 @@ def axis8_daily_tagged():
         result.append({**row, "full_date": d_str, **p})
     return jsonify(result)
 
-@app.route("/api/axis8/calendar-periods")
-def axis8_calendar():
-    year_label = request.args.get("year_label", "2024-2025")
-    return jsonify(ACADEMIC_CALENDAR.get(year_label, []))
-
 @app.route("/api/axis8/holiday-impact-summary")
 def axis8_holiday_impact():
     school_year_key = request.args.get("school_year_key")
@@ -1085,21 +1121,21 @@ def axis8_holiday_impact():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wh = f"AND att.SchoolYearPeriodOid = '{guid}'"
+            wh = f"AND f.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wh = f"AND att.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wh = f"AND f.SchoolYearPeriodOid = '{school_year_key}'"
+
     year_label = _get_year_label(school_year_key)
     daily_map = {}
     for r in query(f"""
         SELECT CAST(d.FullDate AS VARCHAR(10)) AS full_date,
-               ROUND(100.0 * SUM(CASE WHEN f.IsPresent = 0 THEN 1 ELSE 0 END)
+               ROUND(100.0 * SUM(CASE WHEN f.Checks = 0 THEN 1 ELSE 0 END)
                      / NULLIF(COUNT(*), 0), 1) AS absence_rate
         FROM dbo.FactStudentAttendance f
         JOIN dbo.DimDate d ON f.DateKey = d.DateKey
-        WHERE f.StudentOid IS NOT NULL
-          AND d.DateKey <> -1 
-          AND d.FullDate IS NOT NULL 
+        WHERE f.StudentKey IS NOT NULL
+          AND d.DateKey <> -1
+          AND d.FullDate IS NOT NULL
           {wh}
         GROUP BY CAST(d.FullDate AS VARCHAR(10))"""):
         daily_map[r["full_date"][:10]] = r["absence_rate"]
@@ -1170,25 +1206,27 @@ def axis9_performance_by_school():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     rows = query(f"""
-        SELECT s.LastSchool AS raw_school,
-               COUNT(DISTINCT s.StudentOid) AS student_count,
+        SELECT s.BacType AS raw_school,
+               COUNT(DISTINCT s.StudentKey) AS student_count,
                ROUND(AVG(CAST(ev.Average AS FLOAT)), 2) AS avg_score,
                ROUND(100.0 * SUM(CASE WHEN ev.Average >= 10 THEN 1 ELSE 0 END)
                    / NULLIF(COUNT(ev.FactKey), 0), 1) AS pass_rate,
-               ROUND(100.0 * SUM(CASE WHEN att.IsPresent = 0 THEN 1 ELSE 0 END)
+               ROUND(100.0 * SUM(CASE WHEN att.Checks = 0 THEN 1 ELSE 0 END)
                    / NULLIF(COUNT(att.FactKey), 0), 1) AS absence_rate
         FROM dbo.DimStudent s
-        LEFT JOIN dbo.FactStudentEvaluation ev ON s.StudentOid = ev.StudentOid AND ev.Average IS NOT NULL {wy}
-        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentOid = att.StudentOid
-        WHERE s.StudentOid IS NOT NULL 
-          AND s.LastSchool IS NOT NULL 
-          AND s.LastSchool <> ''
-        GROUP BY s.LastSchool""")
+        LEFT JOIN dbo.DimEvaluationReport er ON er.StudentOid = s.StudentOid {wy}
+        LEFT JOIN dbo.FactStudentEvaluation ev ON ev.EvaluationReportKey = er.EvaluationReportKey
+            AND ev.Average IS NOT NULL
+        LEFT JOIN dbo.FactStudentAttendance att ON att.StudentKey = s.StudentKey
+        WHERE s.StudentOid IS NOT NULL
+          AND s.BacType IS NOT NULL
+          AND s.BacType <> ''
+        GROUP BY s.BacType""")
     agg = defaultdict(lambda: {"student_count": 0, "score_sum": 0.0, "score_n": 0,
                                 "pass_sum": 0.0, "pass_n": 0, "absence_sum": 0.0, "absence_n": 0})
     for r in rows:
@@ -1220,23 +1258,25 @@ def axis9_school_ranking():
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     rows = query(f"""
-        SELECT s.LastSchool AS raw_school,
-               COUNT(DISTINCT s.StudentOid) AS student_count,
+        SELECT s.BacType AS raw_school,
+               COUNT(DISTINCT s.StudentKey) AS student_count,
                ROUND(AVG(CAST(ev.Average AS FLOAT)), 2) AS avg_score,
                ROUND(100.0 * SUM(CASE WHEN ev.Average >= 10 THEN 1 ELSE 0 END)
                    / NULLIF(COUNT(ev.FactKey), 0), 1) AS pass_rate
         FROM dbo.DimStudent s
-        LEFT JOIN dbo.FactStudentEvaluation ev ON s.StudentOid = ev.StudentOid AND ev.Average IS NOT NULL {wy}
-        WHERE s.StudentOid IS NOT NULL 
-          AND s.LastSchool IS NOT NULL 
-          AND s.LastSchool <> ''
-        GROUP BY s.LastSchool 
-        HAVING COUNT(DISTINCT s.StudentOid) >= 3""")
+        LEFT JOIN dbo.DimEvaluationReport er ON er.StudentOid = s.StudentOid {wy}
+        LEFT JOIN dbo.FactStudentEvaluation ev ON ev.EvaluationReportKey = er.EvaluationReportKey
+            AND ev.Average IS NOT NULL
+        WHERE s.StudentOid IS NOT NULL
+          AND s.BacType IS NOT NULL
+          AND s.BacType <> ''
+        GROUP BY s.BacType
+        HAVING COUNT(DISTINCT s.StudentKey) >= 3""")
     agg = defaultdict(lambda: {"sc": 0, "ss": 0.0, "sn": 0, "ps": 0.0, "pn": 0})
     for r in rows:
         c = _normalize_school(r["raw_school"])
@@ -1257,13 +1297,13 @@ def axis9_school_ranking():
 
 @app.route("/api/axis9/school-list")
 def axis9_school_list():
-    rows = query("SELECT DISTINCT LastSchool FROM dbo.DimStudent WHERE StudentOid IS NOT NULL AND LastSchool IS NOT NULL AND LastSchool <> ''")
+    rows = query("SELECT DISTINCT BacType FROM dbo.DimStudent WHERE StudentOid IS NOT NULL AND BacType IS NOT NULL AND BacType <> ''")
     seen, result = set(), []
     for r in rows:
-        c = _normalize_school(r["LastSchool"])
+        c = _normalize_school(r["BacType"])
         if c not in seen:
             seen.add(c)
-            result.append({"canonical": c, "sample_raw": r["LastSchool"]})
+            result.append({"canonical": c, "sample_raw": r["BacType"]})
     return jsonify(result)
 
 @app.route("/api/axis9/students-from-school/<school_name>")
@@ -1274,25 +1314,27 @@ def axis9_students_from_school(school_name):
         result = query(f"SELECT SchoolYearOid FROM dbo.DimSchoolYear WHERE SchoolYearKey = {int(school_year_key)}")
         if result and result[0].get("SchoolYearOid"):
             guid = result[0]["SchoolYearOid"]
-            wy = f"AND ev.SchoolYearPeriodOid = '{guid}'"
+            wy = f"AND er.SchoolYearPeriodOid = '{guid}'"
     elif school_year_key:
-        wy = f"AND ev.SchoolYearPeriodOid = '{school_year_key}'"
-    
+        wy = f"AND er.SchoolYearPeriodOid = '{school_year_key}'"
+
     rows = query(f"""
-        SELECT s.FirstName + ' ' + s.LastName AS student_name,
-               s.LastSchool AS prev_school,
+        SELECT s.FullNameArab AS student_name,
+               s.BacType AS prev_school,
                ROUND(AVG(CAST(ev.Average AS FLOAT)), 2) AS avg_score,
-               ROUND(100.0 * SUM(CASE WHEN att.IsPresent = 0 THEN 1 ELSE 0 END)
+               ROUND(100.0 * SUM(CASE WHEN att.Checks = 0 THEN 1 ELSE 0 END)
                    / NULLIF(COUNT(att.FactKey), 0), 1) AS absence_rate,
                ROUND(100.0 * SUM(CASE WHEN ev.Average >= 10 THEN 1 ELSE 0 END)
                    / NULLIF(COUNT(ev.FactKey), 0), 1) AS pass_rate
         FROM dbo.DimStudent s
-        LEFT JOIN dbo.FactStudentEvaluation ev ON s.StudentOid = ev.StudentOid AND ev.Average IS NOT NULL {wy}
-        LEFT JOIN dbo.FactStudentAttendance att ON s.StudentOid = att.StudentOid
-        WHERE s.StudentOid IS NOT NULL 
-          AND s.LastSchool IS NOT NULL 
-          AND s.LastSchool <> ''
-        GROUP BY s.FirstName, s.LastName, s.LastSchool
+        LEFT JOIN dbo.DimEvaluationReport er ON er.StudentOid = s.StudentOid {wy}
+        LEFT JOIN dbo.FactStudentEvaluation ev ON ev.EvaluationReportKey = er.EvaluationReportKey
+            AND ev.Average IS NOT NULL
+        LEFT JOIN dbo.FactStudentAttendance att ON att.StudentKey = s.StudentKey
+        WHERE s.StudentOid IS NOT NULL
+          AND s.BacType IS NOT NULL
+          AND s.BacType <> ''
+        GROUP BY s.FullNameArab, s.BacType
         HAVING COUNT(ev.FactKey) >= 2
         ORDER BY avg_score DESC""")
     return jsonify([r for r in rows if _normalize_school(r["prev_school"]) == school_name])
@@ -1300,7 +1342,6 @@ def axis9_students_from_school(school_name):
 # ══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLER
 # ══════════════════════════════════════════════════════════════════════════════
-
 from werkzeug.exceptions import HTTPException
 
 @app.errorhandler(HTTPException)
@@ -1311,6 +1352,7 @@ def handle_http_error(e):
 def handle_server_error(e):
     logger.error(f"Unhandled exception: {e}")
     return jsonify({"error": "Internal server error", "message": str(e)}), 500
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
